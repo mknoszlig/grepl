@@ -1,10 +1,15 @@
 # grepl
 
-A Clojure library designed to ... well, that part is up to you.
+parsing and manipulating .ice files
 
 ## Usage
 
-FIXME
+too early :)
+
+## Agenda
+
+1. parse and emit files so (= (-> file parse emit) file)
+2. manipulate!
 
 ## License
 
