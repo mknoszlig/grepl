@@ -74,12 +74,19 @@ module Foo {
     (.replaceAll token "[ \t]+" "")
     token))
 
+(defn pop-while [pred list]
+  (let [last-element (peek list)]
+    (if (and last-element
+             (pred last-element))
+      (recur pred (pop list))
+      list)))
+
 (defn walk
   ([s] (walk s []))
   ([[h & t] acc]
      (cond (= "{" h) (let [[step new-t] (walk t [])]
                        (walk new-t (conj acc step)))
-           (= "}" h) [acc t]
+           (= "}" h) [(pop-while #(re-matches #"\s+" %) acc) t]
            (nil? h) acc
            :else (walk t (conj acc h)))))
 
@@ -113,6 +120,7 @@ module Foo {
 (defmethod parse-tokens "interface" [tokens] (parse-definition :interface tokens))
 (defmethod parse-tokens "exception" [tokens] (parse-definition :exception tokens))
 (defmethod parse-tokens "struct" [tokens] (parse-definition :struct tokens))
+(defmethod parse-tokens "enum" [tokens] (parse-definition :enum tokens))
 
 (defmethod parse-tokens :default [[t & tokens]]
   (if t
@@ -140,6 +148,7 @@ module Foo {
 (defmethod emit :interface [entry indent] (emit-definition entry indent))
 (defmethod emit :exception [entry indent] (emit-definition entry indent))
 (defmethod emit :struct [entry indent] (emit-definition entry indent))
+(defmethod emit :enum [entry indent] (emit-definition entry indent))
 (defmethod emit nil [entry indent]
   (if (.endsWith entry "\n")
     (print (str entry indent))
