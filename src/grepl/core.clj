@@ -1,6 +1,11 @@
 (ns grepl.core
   :require [clojure.string :as string])
 
+(comment
+  (require 'clojure.java.javadoc)
+  (clojure.java.javadoc/add-local-javadoc "/usr/share/doc/openjdk-7-doc/api/")
+  )
+
 (def s "module Demo {
     interface Printer {
         void printString(string s);
@@ -67,12 +72,57 @@ module Foo {
 
 (def example-source (slurp "https://raw2.github.com/ome/zeroc-ice/master/cpp/demo/book/simple_filesystem/Filesystem.ice"))
 
-(def scanner #"(?m)\s+|([a-zA-Z_]\w*)|\d+|(\"([^\"]|[\\].)*\")|(//.*)|(/\*.*\*/)|[\{\}\[\]\(\);:<>#.*]")
+;; We will need a proper top-down parser. We need to add functions (in
+;; interfaces), enum values (in enums), and member variables in structs. These
+;; are the items we want to modify later on.
+;;
+;; Since there can be comments and empty lines at all places, we need to add
+;; those to our grammar. This is why we need token types.
 
-(defn trim-bol [token]
-  (if (.contains token "\n")
-    (.replaceAll token "[ \t]+" "")
+(def pattern-strings {:ws "\\s+"
+                      :identifier "([a-zA-Z_]\\w*)"
+                      :integer "\\d+"
+                      :string "(\\\"([^\\\"]|(\\.))*\\\")"
+                      :comment "(//.*)|(/\\*.*\\*/)"
+                      :operator "[\\{\\}\\[\\]\\(\\);:<>#.*]"
+                      })
+(def patterns (apply hash-map (mapcat (fn [[k v]] [k (re-pattern (str "(?m)" v))]) pattern-strings)))
+
+;; named groups are not helpful here, the name is only usable within the regex
+;;
+;; (def scanner (->> pattern-strings
+;;                   (map (fn [[k v]] (str "(?<" (name k) ">" v ")")))
+;;                   (string/join "|")
+;;                   (str "(?m)")
+;;                   re-pattern))
+
+(def scanner (->> pattern-strings
+                  vals
+                  ;(map #(str "(" % ")"))
+                  (string/join "|")
+                  (str "(?m)")
+                  re-pattern))
+
+(defrecord Token [type value])
+
+(defn tokenize [[token]]
+  (first
+   (filter identity
+           (map (fn [[k v]]
+                  (when (re-matches v token)
+                    (Token. k token)))
+                patterns))))
+
+;; (re-matches scanner " ")
+
+(defmulti trim-bol :type)
+
+(defmethod trim-bol :ws [token]
+  (if (.contains (:value token) "\n")
+    (Token. :ws (.replaceAll (:value token) "[ \t]+" ""))
     token))
+
+(defmethod trim-bol :default [token] token)
 
 (defn pop-while [pred list]
   (let [last-element (peek list)]
@@ -91,11 +141,12 @@ module Foo {
            :else (walk t (conj acc h)))))
 
 (comment
-  (map trim-bol (map first (re-seq scanner s)))
-  (walk (map trim-bol (map first (re-seq scanner example-source))))
+  (map :value (map trim-bol (map tokenize (re-seq scanner s))))
+  (walk (map :value (map trim-bol (map tokenize (re-seq scanner example-source)))))
   )
 
-(defmulti parse-tokens (fn [tokens] (first tokens)))
+(defmulti parse-module (fn [tokens] (first tokens)))
+(defmulti parse-function (fn [tokens] (first tokens)))
 
 (defn proper-token? [token]
   (or
@@ -113,19 +164,25 @@ module Foo {
     (cons {:type def-name
            :name name
            :base base
-           :contents (parse-tokens contents)}
-          (parse-tokens (rest (drop-while #(not= ";" %) tokens))))))
+           :contents (parse-module contents)}
+          (parse-module (rest (drop-while #(not= ";" %) tokens))))))
 
-(defmethod parse-tokens "module" [tokens] (parse-definition :module tokens))
-(defmethod parse-tokens "interface" [tokens] (parse-definition :interface tokens))
-(defmethod parse-tokens "exception" [tokens] (parse-definition :exception tokens))
-(defmethod parse-tokens "struct" [tokens] (parse-definition :struct tokens))
-(defmethod parse-tokens "enum" [tokens] (parse-definition :enum tokens))
+(defmethod parse-module "module" [tokens] (parse-definition :module tokens))
+(defmethod parse-module "interface" [tokens] (parse-definition :interface tokens))
+(defmethod parse-module "exception" [tokens] (parse-definition :exception tokens))
+(defmethod parse-module "struct" [tokens] (parse-definition :struct tokens))
+(defmethod parse-module "enum" [tokens] (parse-definition :enum tokens))
 
-(defmethod parse-tokens :default [[t & tokens]]
+(defmethod parse-module :default [[t & tokens]]
   (if t
-    (cons t (parse-tokens tokens))
+    (cons t (parse-module tokens))
     []))
+
+(defmethod parse-function :default [[t & tokens]]
+  (if t
+    (cons t (parse-module tokens))
+    []))
+
 
 (defmulti emit (fn [entry indent] (:type entry)))
 
@@ -155,6 +212,6 @@ module Foo {
     (print entry)))
 
 (comment
-  (emit-all (parse-tokens (walk (map trim-bol (map first (re-seq scanner example-source))))))
+  (emit-all (parse-module (walk (map trim-bol (map first (re-seq scanner example-source))))))
   (print example-source)
   )
