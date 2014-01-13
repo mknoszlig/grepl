@@ -157,7 +157,17 @@ module Foo {
 (defn proper-token? [token]
   (not (#{:ws :comment} (:type token))))
 
-(defn parse-definition [def-name tokens]
+(defn parse-definition [def-name parse-content tokens]
+  (let [proper-tokens (filter proper-token? tokens)
+        [_ name contents semi & proper-tokens] proper-tokens
+        ]
+    (assert (= (:value semi) ";") (str "Ice requires ';' at end of " def-name " definition, found '" semi "'"))
+    (cons {:type def-name
+           :name (:value name)
+           :contents (parse-content contents)}
+          (parse-module (rest (drop-while #(not= ";" (:value %)) tokens))))))
+
+(defn parse-extendable-definition [def-name parse-content tokens]
   (let [proper-tokens (filter proper-token? tokens)
         [_ name & proper-tokens] proper-tokens
         [_ base contents semi] (if (= (:value (first proper-tokens)) "extends")
@@ -168,14 +178,15 @@ module Foo {
     (cons {:type def-name
            :name (:value name)
            :base (:value base)
-           :contents (parse-module contents)}
+           :contents (parse-content contents)}
           (parse-module (rest (drop-while #(not= ";" (:value %)) tokens))))))
 
-(defmethod parse-module "module" [tokens] (parse-definition :module tokens))
-(defmethod parse-module "interface" [tokens] (parse-definition :interface tokens))
-(defmethod parse-module "exception" [tokens] (parse-definition :exception tokens))
-(defmethod parse-module "struct" [tokens] (parse-definition :struct tokens))
-(defmethod parse-module "enum" [tokens] (parse-definition :enum tokens))
+(defmethod parse-module "module" [tokens] (parse-definition :module parse-module tokens))
+(defmethod parse-module "interface" [tokens] (parse-extendable-definition :module parse-module tokens))
+(defmethod parse-module "exception" [tokens] (parse-extendable-definition :exception parse-module tokens))
+(defmethod parse-module "class" [tokens] (parse-extendable-definition :class parse-module tokens))
+(defmethod parse-module "struct" [tokens] (parse-definition :struct parse-module tokens))
+(defmethod parse-module "enum" [tokens] (parse-definition :enum parse-module tokens))
 
 (defmethod parse-module :default [[t & tokens]]
   (if t
@@ -207,6 +218,7 @@ module Foo {
 (defmethod emit :module [entry indent] (emit-definition entry indent))
 (defmethod emit :interface [entry indent] (emit-definition entry indent))
 (defmethod emit :exception [entry indent] (emit-definition entry indent))
+(defmethod emit :class [entry indent] (emit-definition entry indent))
 (defmethod emit :struct [entry indent] (emit-definition entry indent))
 (defmethod emit :enum [entry indent] (emit-definition entry indent))
 (defmethod emit :default [entry indent]
