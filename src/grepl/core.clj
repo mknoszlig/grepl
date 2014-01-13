@@ -1,5 +1,6 @@
 (ns grepl.core
-  :require [clojure.string :as string])
+  (:require [clojure.string :as string]
+            [clojure.pprint :as pprint]))
 
 (comment
   (require 'clojure.java.javadoc)
@@ -84,7 +85,9 @@ module Foo {
                       :integer "\\d+"
                       :string "(\\\"([^\\\"]|(\\.))*\\\")"
                       :comment "(//.*)|(/\\*.*\\*/)"
-                      :operator "[\\{\\}\\[\\]\\(\\);:<>#.*]"
+                      :operator "[\\[\\]\\(\\);:<>#.*]"
+                      :lbrace "\\{"
+                      :rbrace "\\}"
                       })
 (def patterns (apply hash-map (mapcat (fn [[k v]] [k (re-pattern (str "(?m)" v))]) pattern-strings)))
 
@@ -105,12 +108,15 @@ module Foo {
 
 (defrecord Token [type value])
 
+(defn create-token [type value]
+  {:type type :value value})
+
 (defn tokenize [[token]]
   (first
    (filter identity
            (map (fn [[k v]]
                   (when (re-matches v token)
-                    (Token. k token)))
+                    (create-token k token)))
                 patterns))))
 
 ;; (re-matches scanner " ")
@@ -119,7 +125,7 @@ module Foo {
 
 (defmethod trim-bol :ws [token]
   (if (.contains (:value token) "\n")
-    (Token. :ws (.replaceAll (:value token) "[ \t]+" ""))
+    (create-token :ws (.replaceAll (:value token) "[ \t]+" ""))
     token))
 
 (defmethod trim-bol :default [token] token)
@@ -134,38 +140,36 @@ module Foo {
 (defn walk
   ([s] (walk s []))
   ([[h & t] acc]
-     (cond (= "{" h) (let [[step new-t] (walk t [])]
+     (cond (= :lbrace (:type h)) (let [[step new-t] (walk t [])]
                        (walk new-t (conj acc step)))
-           (= "}" h) [(pop-while #(re-matches #"\s+" %) acc) t]
+           (= :rbrace (:type h)) [(pop-while #(= :ws (:type %)) acc) t]
            (nil? h) acc
            :else (walk t (conj acc h)))))
 
 (comment
   (map :value (map trim-bol (map tokenize (re-seq scanner s))))
-  (walk (map :value (map trim-bol (map tokenize (re-seq scanner example-source)))))
+  (walk (map trim-bol (map tokenize (re-seq scanner example-source))))
   )
 
-(defmulti parse-module (fn [tokens] (first tokens)))
-(defmulti parse-function (fn [tokens] (first tokens)))
+(defmulti parse-module (fn [[token]] (:value token)))
+(defmulti parse-function (fn [[token]] (:value token)))
 
 (defn proper-token? [token]
-  (or
-   (not (string? token))
-   (not (re-matches #"(?m)(\s+|//.*|/\*.*)" token))))
+  (not (#{:ws :comment} (:type token))))
 
 (defn parse-definition [def-name tokens]
   (let [proper-tokens (filter proper-token? tokens)
         [_ name & proper-tokens] proper-tokens
-        [_ base contents semi] (if (= (first proper-tokens) "extends")
-                                proper-tokens
-                                (cons nil (cons nil proper-tokens)))
+        [_ base contents semi] (if (= (:value (first proper-tokens)) "extends")
+                                 proper-tokens
+                                 (cons nil (cons nil proper-tokens)))
         ]
-    (assert (= semi ";") (str "Ice requires ';' at end of " def-name " definition, found '" semi "'"))
+    (assert (= (:value semi) ";") (str "Ice requires ';' at end of " def-name " definition, found '" semi "'"))
     (cons {:type def-name
-           :name name
-           :base base
+           :name (:value name)
+           :base (:value base)
            :contents (parse-module contents)}
-          (parse-module (rest (drop-while #(not= ";" %) tokens))))))
+          (parse-module (rest (drop-while #(not= ";" (:value %)) tokens))))))
 
 (defmethod parse-module "module" [tokens] (parse-definition :module tokens))
 (defmethod parse-module "interface" [tokens] (parse-definition :interface tokens))
@@ -182,7 +186,6 @@ module Foo {
   (if t
     (cons t (parse-module tokens))
     []))
-
 
 (defmulti emit (fn [entry indent] (:type entry)))
 
@@ -206,12 +209,13 @@ module Foo {
 (defmethod emit :exception [entry indent] (emit-definition entry indent))
 (defmethod emit :struct [entry indent] (emit-definition entry indent))
 (defmethod emit :enum [entry indent] (emit-definition entry indent))
-(defmethod emit nil [entry indent]
-  (if (.endsWith entry "\n")
-    (print (str entry indent))
-    (print entry)))
+(defmethod emit :default [entry indent]
+  (let [value (:value entry)]
+    (if (.endsWith value "\n")
+      (print (str value indent))
+      (print value))))
 
 (comment
-  (emit-all (parse-module (walk (map trim-bol (map first (re-seq scanner example-source))))))
+  (emit-all (parse-module (walk (map trim-bol (map tokenize (re-seq scanner example-source))))))
   (print example-source)
   )
