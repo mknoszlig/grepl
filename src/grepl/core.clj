@@ -85,9 +85,11 @@ module Foo {
                       :integer "\\d+"
                       :string "(\\\"([^\\\"]|(\\.))*\\\")"
                       :comment "(//.*)|(/\\*.*\\*/)"
-                      :operator "[\\[\\]\\(\\);:<>#.*]"
+                      :operator "[\\[\\];:<>#.*]"
                       :lbrace "\\{"
                       :rbrace "\\}"
+                      :lparen "\\("
+                      :rparen "\\)"
                       })
 (def patterns (apply hash-map (mapcat (fn [[k v]] [k (re-pattern (str "(?m)" v))]) pattern-strings)))
 
