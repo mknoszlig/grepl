@@ -182,7 +182,7 @@ module Foo {
           (parse-module (rest (drop-while #(not= ";" (:value %)) tokens))))))
 
 (defmethod parse-module "module" [tokens] (parse-definition :module parse-module tokens))
-(defmethod parse-module "interface" [tokens] (parse-extendable-definition :module parse-module tokens))
+(defmethod parse-module "interface" [tokens] (parse-extendable-definition :module parse-function tokens))
 (defmethod parse-module "exception" [tokens] (parse-extendable-definition :exception parse-module tokens))
 (defmethod parse-module "class" [tokens] (parse-extendable-definition :class parse-module tokens))
 (defmethod parse-module "struct" [tokens] (parse-definition :struct parse-module tokens))
