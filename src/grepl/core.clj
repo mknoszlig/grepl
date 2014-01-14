@@ -142,11 +142,11 @@ module Foo {
 (defn walk
   ([s] (walk s []))
   ([[h & t] acc]
-     (cond (= :lbrace (:type h)) (let [[step new-t] (walk t [])]
-                       (walk new-t (conj acc step)))
-           (= :rbrace (:type h)) [(pop-while #(= :ws (:type %)) acc) t]
+     (cond (#{:lbrace :lparen} (:type h)) (let [[step new-t] (walk t [h])]
+                                            (walk new-t (conj acc step)))
+           (#{:rbrace :rparen} (:type h)) [(conj acc h) t]
            (nil? h) acc
-           :else (walk t (conj acc h)))))
+           :else (recur t (conj acc h)))))
 
 (comment
   (map :value (map trim-bol (map tokenize (re-seq scanner s))))
@@ -154,7 +154,7 @@ module Foo {
   )
 
 (defmulti parse-module (fn [[token]] (:value token)))
-(defmulti parse-function (fn [[token]] (:value token)))
+(defmulti parse-function (fn [[token]] (:type token)))
 
 (defn proper-token? [token]
   (not (#{:ws :comment} (:type token))))
@@ -184,7 +184,7 @@ module Foo {
           (parse-module (rest (drop-while #(not= ";" (:value %)) tokens))))))
 
 (defmethod parse-module "module" [tokens] (parse-definition :module parse-module tokens))
-(defmethod parse-module "interface" [tokens] (parse-extendable-definition :module parse-function tokens))
+(defmethod parse-module "interface" [tokens] (parse-extendable-definition :interface parse-function tokens))
 (defmethod parse-module "exception" [tokens] (parse-extendable-definition :exception parse-module tokens))
 (defmethod parse-module "class" [tokens] (parse-extendable-definition :class parse-module tokens))
 (defmethod parse-module "struct" [tokens] (parse-definition :struct parse-module tokens))
@@ -195,9 +195,42 @@ module Foo {
     (cons t (parse-module tokens))
     []))
 
+(defmethod parse-function :identifier [tokens]
+  (let [proper-tokens (filter proper-token? tokens)
+        [name return-type & modifiers] (map :value (reverse (take-while :type proper-tokens)))
+        [args & proper-tokens] (drop-while :type proper-tokens)
+        args (->> args
+                  rest
+                  butlast
+                  (map :value)
+                  (partition-by #(= "," %))
+                  (take-nth 2)
+                  )
+        [exceptions & proper-tokens] (if (-> proper-tokens first :value (= "throws"))
+                                       (cons (->> proper-tokens
+                                                  rest
+                                                  (map :value)
+                                                  (take-while #(not= % ";"))
+                                                  (partition-by #(=  % ","))
+                                                  (take-nth 2)
+                                                  (mapcat identity))
+                                             (->> proper-tokens
+                                                  (drop-while #(-> % :value (not= ";")))))
+                                       (cons nil proper-tokens))
+        [semi] proper-tokens
+        ]
+    (assert (= (:value semi) ";") (str "Ice requires ';' at end of " name " definition, found '" semi "'"))
+    (cons {:type :function
+           :name name
+           :return-type return-type
+           :modifiers modifiers
+           :args args
+           :exceptions exceptions}
+          (parse-function (rest (drop-while #(not= ";" (:value %)) tokens))))))
+
 (defmethod parse-function :default [[t & tokens]]
   (if t
-    (cons t (parse-module tokens))
+    (cons t (parse-function tokens))
     []))
 
 (defmulti emit (fn [entry indent] (:type entry)))
@@ -211,10 +244,10 @@ module Foo {
 (defn emit-definition [entry indent]
   (println (str (name (:type entry)) " " (:name entry)
                 (when (:base entry) (str " extends " (:base entry)))))
-  (print (str indent "{"))
+  (print indent)
   (emit-all (:contents entry) (str indent "    "))
   (println)
-  (print (str indent "};"))
+  (print ";")
   )
 
 (defmethod emit :module [entry indent] (emit-definition entry indent))
@@ -223,6 +256,17 @@ module Foo {
 (defmethod emit :class [entry indent] (emit-definition entry indent))
 (defmethod emit :struct [entry indent] (emit-definition entry indent))
 (defmethod emit :enum [entry indent] (emit-definition entry indent))
+(defmethod emit :function [entry indent]
+  (print indent)
+  (print (apply str (interleave (:modifiers entry) (repeat " "))))
+  (print (str (:return-type entry) " " (:name entry)))
+  (print "(")
+  (print (apply str (interpose "," (map string/join (:args entry)))))
+  (print ")")
+  (when (:exceptions entry)
+    (print (apply str (cons " throws " (interpose ", " (:exceptions entry))))))
+  (print ";")
+  )
 (defmethod emit :default [entry indent]
   (let [value (:value entry)]
     (if (.endsWith value "\n")
