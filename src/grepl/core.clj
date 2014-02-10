@@ -123,14 +123,22 @@ module Foo {
 
 ;; (re-matches scanner " ")
 
-(defmulti trim-bol :type)
+(comment
+  (defmulti trim-bol :type)
 
-(defmethod trim-bol :ws [token]
-  (if (.contains (:value token) "\n")
+  (defmethod trim-bol :ws [token]
+    (if (.contains (:value token) "\n")
+      (create-token :ws (.replaceAll (:value token) "[ \t]+" ""))
+      token))
+
+  (defmethod trim-bol :default [token] token)
+  )
+
+(defn trim-bol :ws [token]
+  (if (and (= (:type token) :ws)
+           (.contains (:value token) "\n"))
     (create-token :ws (.replaceAll (:value token) "[ \t]+" ""))
     token))
-
-(defmethod trim-bol :default [token] token)
 
 (defn pop-while [pred list]
   (let [last-element (peek list)]
