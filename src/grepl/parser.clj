@@ -41,32 +41,49 @@
   (if filter-ws
     [(filter
       #(not (#{:newline :ws :comment} (:type %)))
-      (take-while #(not= (:type %) expected-type) tokens))
-     (drop-while #(not= (:type %) expected-type) tokens)]
-    [(take-while #(not= (:type %) expected-type) tokens)
-     (drop-while #(not= (:type %) expected-type) tokens)]
+      (take-while #(not (expected-type (:type %))) tokens))
+     (drop-while #(not (expected-type (:type %))) tokens)]
+    [(take-while #(not (expected-type (:type %))) tokens)
+     (drop-while #(not (expected-type (:type %))) tokens)]
     ))
+
+(defn parse-line [tokens]
+  (let [[line tokens] (parse-until tokens #{:newline :rbrace} false)]
+    (if (first-token-type? tokens :newline)
+      [{:type :line :content line} (next tokens)]
+      [{:type :line :content line} tokens]
+      )))
 
 (defn parse-block [parse-fn tokens]
   ;; parse the header line, ignore ws, newline and comment
   ;; parse the block, recursively call parsing functions
-  (let [[header tokens] (parse-until tokens :lbrace true)]
+  (let [[header tokens] (parse-until tokens #{:lbrace} true)]
     (assert (first-token-type? tokens :lbrace))
     (loop [content []
            tokens (next tokens)]
       (if (and tokens
                (first-token-type? tokens :rbrace))
-        (let [[skip tokens] (parse-until (next tokens) :semicolon true)]
+        (let [[skip tokens] (parse-until (next tokens) #{:semicolon} true)]
           (assert (= (count skip) 0) (str "Expected 0 but found " (count skip) " tokens"))
           [header content (next tokens)])
         (let [[entry tokens] (parse-fn tokens)]
           (recur (conj content entry) tokens))
         ))))
 
+(defn parse-exception [tokens]
+  (parse-line tokens))
+
+(defn parse-interface [tokens]
+  (parse-line tokens))
+
 (defmethod parse-module :newline [[token & r]] [token r])
 (defmethod parse-module :ws [[token & r]] [token r])
 (defmethod parse-module :comment [[token & r]] [token r])
+(defmethod parse-module :semicolon [[token & r]] [token r])
 (defmethod parse-module :identifier [tokens] (parse-definition tokens))
+(defmethod parse-module :default [[token]]
+  (when token
+    (throw (Exception. (str "unexpected token type '" (:type token) "'")))))
 
 (defmethod parse-definition "module" [tokens]
   (let [[header block tokens] (parse-block parse-module tokens)]
@@ -77,17 +94,30 @@
     (assert (= (count header) 2))
     [{:type :module :name (:value (second header)) :content block} tokens]))
 
-(defmethod parse-definition :default [tokens]
-  (let [[line r] (parse-until tokens :newline false)]
-    [{:type :line :content line} r]))
+(defmethod parse-definition "exception" [tokens]
+  (let [[header block tokens] (parse-block parse-exception tokens)]
+    ;; better error handling
+    (assert (= (:type (first header) :identifier)))
+    (assert (= (:value (first header) "exception")))
+    (assert (= (:type (second header) :identifier)))
+    ;;(assert (= (count header) 2))
+    [{:type :exception :name (:value (second header)) :content block} tokens]))
 
-(defmethod parse-module :default [[token]]
-  (throw (Exception. (str "unexpected token type " (:type token)))))
+(defmethod parse-definition "interface" [tokens]
+  (let [[header block tokens] (parse-block parse-interface tokens)]
+    ;; better error handling
+    (assert (= (:type (first header) :identifier)))
+    (assert (= (:value (first header) "interface")))
+    (assert (= (:type (second header) :identifier)))
+    ;;(assert (= (count header) 2))
+    [{:type :interface :name (:value (second header)) :content block} tokens]))
+
+(defmethod parse-definition :default [tokens] (parse-line tokens))
 
 (defn parse-seq
   [tokens]
   (lazy-seq
-   (when (seq tokens)
+   (when-let [tokens (seq tokens)]
      (let [[entry tokens] (parse-module tokens)]
        (cons entry (parse-seq tokens))))))
 
@@ -102,5 +132,10 @@
 
 (comment
   (parse "https://raw2.github.com/ome/zeroc-ice/master/cpp/demo/book/simple_filesystem/Filesystem.ice")
+  (def example (slurp "https://raw2.github.com/ome/zeroc-ice/master/cpp/demo/book/simple_filesystem/Filesystem.ice"))
+  (parse-file "" (grepl.lexer/lex example))
+
   (parse-file "" (grepl.lexer/lex "module a {module b {module c {};};};"))
+  (parse-file "" (grepl.lexer/lex "module a {class b {};};"))
+  (parse-file "" (grepl.lexer/lex "module a {interface b {}; interface c {};};"))
   )
