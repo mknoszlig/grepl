@@ -3,6 +3,8 @@
             [clojure.pprint :as pprint]))
 
 (comment
+
+(comment
   (require 'clojure.java.javadoc)
   (clojure.java.javadoc/add-local-javadoc "/usr/share/doc/openjdk-7-doc/api/")
   )
@@ -285,3 +287,4 @@ module Foo {
   (emit-all (parse-module (walk (map trim-bol (map tokenize (re-seq scanner example-source))))))
   (print example-source)
   )
+)
