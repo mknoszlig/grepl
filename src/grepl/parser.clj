@@ -29,14 +29,56 @@
 ;;(defrecord Entity [type name content])
 
 (defmulti parse-module (fn [[token]] (:type token)))
+(defmulti parse-definition (fn [[token]] (:value token)))
+
+(defn first-token-type? [tokens expected-type]
+  (= (:type (first tokens)) expected-type))
+
+(defn first-token-value? [tokens expected-value]
+  (= (:value (first tokens)) expected-value))
+
+(defn parse-until [tokens expected-type filter-ws]
+  (if filter-ws
+    [(filter
+      #(not (#{:newline :ws :comment} (:type %)))
+      (take-while #(not= (:type %) expected-type) tokens))
+     (drop-while #(not= (:type %) expected-type) tokens)]
+    [(take-while #(not= (:type %) expected-type) tokens)
+     (drop-while #(not= (:type %) expected-type) tokens)]
+    ))
+
+(defn parse-block [parse-fn tokens]
+  ;; parse the header line, ignore ws, newline and comment
+  ;; parse the block, recursively call parsing functions
+  (let [[header tokens] (parse-until tokens :lbrace true)]
+    (assert (first-token-type? tokens :lbrace))
+    (loop [content []
+           tokens (next tokens)]
+      (if (and tokens
+               (first-token-type? tokens :rbrace))
+        (let [[skip tokens] (parse-until (next tokens) :semicolon true)]
+          (assert (= (count skip) 0) (str "Expected 0 but found " (count skip) " tokens"))
+          [header content (next tokens)])
+        (let [[entry tokens] (parse-fn tokens)]
+          (recur (conj content entry) tokens))
+        ))))
 
 (defmethod parse-module :newline [[token & r]] [token r])
 (defmethod parse-module :ws [[token & r]] [token r])
 (defmethod parse-module :comment [[token & r]] [token r])
+(defmethod parse-module :identifier [tokens] (parse-definition tokens))
 
-(defmethod parse-module :identifier [tokens]
-  (let [line (take-while #(not= (:type %) :newline) tokens)
-        r (drop-while #(not= (:type %) :newline) tokens)]
+(defmethod parse-definition "module" [tokens]
+  (let [[header block tokens] (parse-block parse-module tokens)]
+    ;; better error handling
+    (assert (= (:type (first header) :identifier)))
+    (assert (= (:value (first header) "module")))
+    (assert (= (:type (second header) :identifier)))
+    (assert (= (count header) 2))
+    [{:type :module :name (:value (second header)) :content block} tokens]))
+
+(defmethod parse-definition :default [tokens]
+  (let [[line r] (parse-until tokens :newline false)]
     [{:type :line :content line} r]))
 
 (defmethod parse-module :default [[token]]
@@ -60,5 +102,5 @@
 
 (comment
   (parse "https://raw2.github.com/ome/zeroc-ice/master/cpp/demo/book/simple_filesystem/Filesystem.ice")
-  (parse-file "" (grepl.lexer/lex " a"))
+  (parse-file "" (grepl.lexer/lex "module a {module b {module c {};};};"))
   )
